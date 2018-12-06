@@ -36,7 +36,7 @@ import os
 print("MLflow Version: %s" % mlflow.__version__)
 
 # Configure Databricks MLflow environment
-EXPERIMENT_NAME = "mab_mnist_multi_hpopt"
+EXPERIMENT_NAME = "mab_mnist_single_hpopt"
 mlflow.set_experiment(EXPERIMENT_NAME)
 
 from datetime import datetime
@@ -47,6 +47,15 @@ print RUN_NAME
 from hyperopt import fmin, hp, tpe, STATUS_OK
 
 
+
+# COMMAND ----------
+
+# MAGIC %md ### Do we want to train a model for batch inference, or for realtime?
+
+# COMMAND ----------
+
+#application = "realtime"
+application = "batch"
 
 # COMMAND ----------
 
@@ -122,9 +131,6 @@ def create_model(hpo):
   # Apply Softmax
   model.add(Dense(num_classes, activation='softmax'))
 
-  # Select SGD Algorithm
-  optimizer_call = getattr(keras.optimizers, hpo['optimizer'])
-  optimizer = optimizer_call(math.pow(10, hpo['learning_rate']))
   return model
 
 # COMMAND ----------
@@ -136,6 +142,10 @@ def create_model(hpo):
 def runCNN(hpo):
 
   model = create_model(hpo)
+  
+  # Select SGD Algorithm
+  optimizer_call = getattr(keras.optimizers, hpo['optimizer'])
+  optimizer = optimizer_call(math.pow(10, hpo['learning_rate']))
   
   # MLflow Tracking
   with mlflow.start_run(run_name=RUN_NAME) as run:
@@ -165,6 +175,7 @@ def runCNN(hpo):
     total_eval_time = complete_eval_time - complete_train_time
     
     # Log MLflow Parameters
+    mlflow.log_param("application", application)
     mlflow.log_param("mode", "single_node")
     mlflow.log_param("kernel", hpo['kernel'])
     mlflow.log_param("conv", hpo['conv'])
@@ -183,7 +194,18 @@ def runCNN(hpo):
          
     # Log Model
     mlflow.keras.log_model(model, "models")
-    return {'loss': -score[1], 'status': STATUS_OK}
+    
+    # Modify objective function depending on goal for model!
+    # batch inference
+    if application == "batch":
+      obj_metric = -score[1]
+    # real time
+    elif application == "realtime":
+      obj_metric = -(score[1] - total_eval_time)
+    else:
+      exit("you must provide a valid application (\"batch\" or \"realtime\")")
+      
+    return {'loss': obj_metric, 'status': STATUS_OK}
 
   # Close TF session
   sess.close()
